@@ -1,0 +1,13 @@
+name = "selman-api"
+main = "src/index.js"
+compatibility_date = "2026-01-01"
+
+[vars]
+# Public URL of your R2 bucket (custom domain such as https://media.yourdomain.com,
+# or the r2.dev URL while testing). No trailing slash.
+MEDIA_BASE_URL = "https://media.example.com"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "selman-db"
+database_id = "REPLACE_WITH_ID_FROM_wrangler_d1_create"
