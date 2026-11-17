@@ -5,7 +5,7 @@ compatibility_date = "2026-01-01"
 [vars]
 # Public URL of your R2 bucket (custom domain such as https://media.yourdomain.com,
 # or the r2.dev URL while testing). No trailing slash.
-MEDIA_BASE_URL = "https://media.example.com"
+MEDIA_BASE_URL = "https://pub-5a5110a13c404eec9a28aa362e746540.r2.dev"
 
 [[d1_databases]]
 binding = "DB"
