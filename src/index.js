@@ -1,3 +1,6 @@
+import { handleAdmin } from './admin.js';
+import { handleAuth } from './auth.js';
+
 // Selman Messages API - Cloudflare Worker
 // D1 holds the metadata, R2 holds the audio and images.
 //
@@ -160,6 +163,9 @@ async function handleItems(env, speakerId) {
 
 export default {
   async fetch(request, env) {
+    const first = new URL(request.url).pathname;
+    if (first.startsWith('/admin')) return handleAdmin(request, env);
+    if (first.startsWith('/api/auth/')) return handleAuth(request, env);
     if (request.method === 'OPTIONS') return new Response(null, { headers: CORS });
     if (request.method !== 'GET') return json({ error: 'Method not allowed' }, 405);
 
