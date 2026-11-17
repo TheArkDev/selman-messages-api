@@ -10,4 +10,4 @@ MEDIA_BASE_URL = "https://pub-5a5110a13c404eec9a28aa362e746540.r2.dev"
 [[d1_databases]]
 binding = "DB"
 database_name = "selman-db"
-database_id = "REPLACE_WITH_ID_FROM_wrangler_d1_create"
+database_id = "db939ed4-9938-4a63-869b-92552f4da267"
