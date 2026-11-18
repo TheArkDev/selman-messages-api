@@ -54,6 +54,7 @@ function mapTrack(env, r) {
     audio_url: mediaUrl(env, r.audio_key),
     image_url: mediaUrl(env, r.image_key || r.speaker_image_key),
     duration_sec: r.duration_sec || 0,
+    glow: r.speaker_glow || null,
   };
 }
 
@@ -112,7 +113,7 @@ function pickMixed(rows, n, rand) {
 }
 
 const TRACK_SELECT = `
-  SELECT i.*, s.name AS speaker_name, s.image_key AS speaker_image_key
+  SELECT i.*, s.name AS speaker_name, s.image_key AS speaker_image_key, s.glow AS speaker_glow
   FROM items i JOIN speakers s ON s.id = i.speaker_id`;
 
 // ---- handlers ----------------------------------------------------------------
@@ -165,6 +166,16 @@ export default {
   async fetch(request, env) {
     const first = new URL(request.url).pathname;
     if (first.startsWith('/admin')) return handleAdmin(request, env);
+    if (first === '/api/health') {
+      // Shows only yes/no for each setting, never the values.
+      return json({
+        ok: true,
+        database: !!env.DB,
+        media_bucket: !!env.MEDIA,
+        secret: !!(env.AUTH_SECRET || env.ADMIN_PASSWORD),
+        admin_emails: String(env.ADMIN_EMAILS || '').split(',').some((e) => e.trim()),
+      });
+    }
     if (first.startsWith('/api/auth/')) return handleAuth(request, env);
     if (request.method === 'OPTIONS') return new Response(null, { headers: CORS });
     if (request.method !== 'GET') return json({ error: 'Method not allowed' }, 405);
