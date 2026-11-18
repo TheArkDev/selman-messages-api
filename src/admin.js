@@ -64,6 +64,63 @@ function titleFromFilename(name) {
     .trim();
 }
 
+// Turns a file name (or a title that came from one) into just the message
+// title: drops the speaker's name, honorifics, track numbers, website names
+// and tags like "(Official Audio)".
+const HONORIFICS = '(?:apostle|apst|bishop|pastor|pst|rev(?:erend)?|prophet|dr|doctor|evangelist|ev|elder|minister|mr|mrs|ps)';
+function escRe(x) {
+  return x.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+function cleanTitle(raw, speakerName) {
+  let t = titleFromFilename(raw);
+  t = t.replace(/[–—]/g, '-');
+
+  // website names and links
+  t = t.replace(/https?:\/\/\S+/gi, ' ').replace(/\bwww\.\S+/gi, ' ').replace(/\b[\w-]+\.(?:com|net|org|co|ng|ke|info|tv|fm)\b/gi, ' ');
+  // tags in brackets that are only labels
+  t = t.replace(/[\(\[]\s*(?:official|audio|video|lyrics?|hd|mp3|full|new|free download|download)[^\)\]]*[\)\]]/gi, ' ');
+
+  // the speaker's name, in full and by parts (keeps parts of 3+ letters)
+  const name = String(speakerName || '')
+    .replace(new RegExp('\\b' + HONORIFICS + '\\b\\.?', 'gi'), ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  const words = name.split(' ').filter((w) => w.length >= 3);
+  const variants = [];
+  if (name) variants.push(name);
+  if (words.length > 1) variants.push(words.join(' '));
+  for (const v of variants.sort((a, b) => b.length - a.length)) {
+    t = t.replace(new RegExp(escRe(v).replace(/\s+/g, '[\\s._-]+'), 'gi'), ' ');
+  }
+  // leftover honorific + surname, e.g. "Apostle Selman" or "Bishop Oyedepo"
+  for (const w of words) {
+    t = t.replace(new RegExp('\\b' + HONORIFICS + '\\.?\\s+' + escRe(w) + '\\b', 'gi'), ' ');
+    t = t.replace(new RegExp('(^|[\\s-])' + escRe(w) + '(?=$|[\\s-])', 'gi'), ' ');
+  }
+  t = t.replace(new RegExp('\\b' + HONORIFICS + '\\b\\.?(?=\\s*(?:-|$))', 'gi'), ' ');
+
+  // leading track numbers: "01 ", "02.", "3) "
+  t = t.replace(/^\s*\d{1,3}\s*[.)\-_]\s*/, ' ');
+  // separators left at the ends or doubled
+  t = t.replace(/\s*-\s*(?:-\s*)+/g, ' - ').replace(/^[\s\-|:,._]+|[\s\-|:,._]+$/g, '');
+  t = t.replace(/\(\s*\)|\[\s*\]/g, ' ').replace(/\s+/g, ' ').trim();
+  return t || titleFromFilename(raw);
+}
+
+// Same title in the same folder? Ignores case, spaces and punctuation.
+function sameTitleKey(t) {
+  return String(t || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
+}
+async function existingTitle(env, sp, title) {
+  const key = sameTitleKey(title);
+  if (!key) return null;
+  const { results } = await env.DB.prepare('SELECT title FROM items WHERE speaker_id = ?').bind(sp.id).all();
+  for (const r of results || []) {
+    if (sameTitleKey(r.title) === key || sameTitleKey(cleanTitle(r.title, sp.name)) === key) return r.title;
+  }
+  return null;
+}
+
 function validColor(c) {
   return typeof c === 'string' && /^#[0-9a-fA-F]{6}$/.test(c);
 }
@@ -192,7 +249,9 @@ async function uploadStart(request, env) {
   const e = ext(b.filename);
   const type = AUDIO_TYPES[e];
   if (!type) return fail('Audio must be mp3, m4a, aac, wav, ogg or opus');
-  const base = slug(titleFromFilename(b.filename)) || 'audio';
+  const dupe = await existingTitle(env, sp, cleanTitle(b.filename, sp.name));
+  if (dupe) return fail(`Already uploaded: "${dupe}" is in ${sp.name}'s folder`, 409);
+  const base = slug(cleanTitle(b.filename, sp.name)) || 'audio';
   const key = `${sp.category}/${sp.id}/${rand(6)}-${base}.${e}`;
   const mp = await env.MEDIA.createMultipartUpload(key, { httpMetadata: { contentType: type } });
   return json({ key, uploadId: mp.uploadId });
@@ -219,8 +278,17 @@ async function uploadComplete(request, env) {
   if (!sp) return fail('Folder not found', 404);
   if (!b.key.startsWith(`${sp.category}/${sp.id}/`)) return fail('File does not belong to this folder');
 
-  const title = String(b.title || '').trim() || titleFromFilename(b.key.split('/').pop());
+  const title = cleanTitle(String(b.title || '').trim() || b.key.split('/').pop(), sp.name);
   if (title.length > 200) return fail('Title is too long (max 200 characters)');
+  const dupe = await existingTitle(env, sp, title);
+  if (dupe) {
+    try {
+      await env.MEDIA.resumeMultipartUpload(b.key, b.uploadId).abort();
+    } catch (e) {
+      /* already gone */
+    }
+    return fail(`Already uploaded: "${dupe}" is in ${sp.name}'s folder`, 409);
+  }
   const parts = b.parts.map((p) => ({ partNumber: Number(p.partNumber), etag: String(p.etag) }));
 
   await env.MEDIA.resumeMultipartUpload(b.key, b.uploadId).complete(parts);
