@@ -255,10 +255,11 @@ export async function handleAdmin(request, env) {
   const method = request.method;
 
   if (!secretOf(env) || !env.MEDIA) {
-    return new Response(
-      'Admin is not set up yet. Add the ADMIN_PASSWORD (or AUTH_SECRET) secret and the MEDIA R2 binding, then redeploy.',
-      { status: 503 }
-    );
+    const msg = !secretOf(env)
+      ? 'Admin is not set up: the AUTH_SECRET (or ADMIN_PASSWORD) secret is missing on the deployed Worker.'
+      : 'Admin is not set up: the R2 bucket connection called MEDIA is missing on the deployed Worker.';
+    if (path.startsWith('/admin/api/')) return fail(msg, 503);
+    return new Response(msg, { status: 503 });
   }
 
   if (path === '/admin' && method === 'GET') {
