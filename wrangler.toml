@@ -5,7 +5,7 @@ keep_vars = true
 
 # ...
 [vars]
-MEDIA_BASE_URL = "https://pub-5a5110a13c404eec9a28aa362e746540.r2.dev"
+MEDIA_BASE_URL = "https://pub-b64733ce0d204ae3864a858b02a2455e.r2.dev"
 # ...
 
 
