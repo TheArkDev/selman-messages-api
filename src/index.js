@@ -1,5 +1,6 @@
 import { handleAdmin } from './admin.js';
 import { handleAuth } from './auth.js';
+import { ensureSchema } from './schema.js';
 
 // Selman Messages API - Cloudflare Worker
 // D1 holds the metadata, R2 holds the audio and images.
@@ -7,12 +8,14 @@ import { handleAuth } from './auth.js';
 //   GET /api/home                      -> { featured: [...], suggested: [...] }
 //   GET /api/speakers?category=mog     -> folders for MOG | songs | prayer
 //   GET /api/speakers/:id/items        -> everything inside one folder
+//   GET /api/search?q=faith            -> messages whose title, speaker or series match
+//   POST /api/items/:id/play           -> counts one listen
 
 const CATEGORIES = new Set(['mog', 'songs', 'prayer']);
 
 const CORS = {
   'access-control-allow-origin': '*',
-  'access-control-allow-methods': 'GET, OPTIONS',
+  'access-control-allow-methods': 'GET, POST, OPTIONS',
   'access-control-allow-headers': 'content-type',
 };
 
@@ -55,6 +58,9 @@ function mapTrack(env, r) {
     image_url: mediaUrl(env, r.image_key || r.speaker_image_key),
     duration_sec: r.duration_sec || 0,
     glow: r.speaker_glow || null,
+    preached_on: r.preached_on || null,
+    series: r.series || null,
+    description: r.description || null,
   };
 }
 
@@ -155,11 +161,49 @@ async function handleSpeakers(env, category) {
 
 async function handleItems(env, speakerId) {
   const { results } = await env.DB.prepare(
-    `${TRACK_SELECT} WHERE i.speaker_id = ? ORDER BY i.published_at DESC, i.title`
+    `${TRACK_SELECT} WHERE i.speaker_id = ?
+     ORDER BY COALESCE(NULLIF(i.preached_on, ''), substr(i.published_at, 1, 10)) DESC, i.published_at DESC, i.title`
   )
     .bind(speakerId)
     .all();
   return json(results.map((r) => mapTrack(env, r)), 200, 300);
+}
+
+
+function likeEscape(t) {
+  return t.replace(/[\\%_]/g, (c) => '\\' + c);
+}
+
+async function handleSearch(env, q) {
+  const terms = String(q || '')
+    .toLowerCase()
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 5)
+    .map((t) => t.slice(0, 40));
+  if (terms.length === 0 || terms.join('').length < 2) return json([], 200, 60);
+  const where = terms
+    .map(
+      () =>
+        `(LOWER(i.title) LIKE ? ESCAPE '\\' OR LOWER(s.name) LIKE ? ESCAPE '\\' OR LOWER(COALESCE(i.series, '')) LIKE ? ESCAPE '\\')`
+    )
+    .join(' AND ');
+  const binds = terms.flatMap((t) => {
+    const p = `%${likeEscape(t)}%`;
+    return [p, p, p];
+  });
+  const { results } = await env.DB.prepare(
+    `${TRACK_SELECT} WHERE ${where} ORDER BY i.plays DESC, i.published_at DESC, i.title LIMIT 60`
+  )
+    .bind(...binds)
+    .all();
+  return json(results.map((r) => mapTrack(env, r)), 200, 60);
+}
+
+async function handlePlay(env, id) {
+  if (!id || id.length > 120) return json({ error: 'Bad request' }, 400);
+  await env.DB.prepare('UPDATE items SET plays = plays + 1 WHERE id = ?').bind(id).run();
+  return json({ ok: true });
 }
 
 export default {
@@ -178,13 +222,26 @@ export default {
     }
     if (first.startsWith('/api/auth/')) return handleAuth(request, env);
     if (request.method === 'OPTIONS') return new Response(null, { headers: CORS });
-    if (request.method !== 'GET') return json({ error: 'Method not allowed' }, 405);
 
     const url = new URL(request.url);
     const path = url.pathname.replace(/\/+$/, '');
 
+    // The only public write: counting a listen.
+    const playMatch = path.match(/^\/api\/items\/([^/]+)\/play$/);
+    if (playMatch && request.method === 'POST') {
+      try {
+        await ensureSchema(env);
+        return await handlePlay(env, decodeURIComponent(playMatch[1]));
+      } catch (e) {
+        return json({ error: 'Server error' }, 500);
+      }
+    }
+    if (request.method !== 'GET') return json({ error: 'Method not allowed' }, 405);
+
     try {
+      if (path !== '' && path !== '/') await ensureSchema(env);
       if (path === '/api/home') return await handleHome(env);
+      if (path === '/api/search') return await handleSearch(env, url.searchParams.get('q'));
       if (path === '/api/speakers') {
         return await handleSpeakers(env, url.searchParams.get('category') || 'mog');
       }

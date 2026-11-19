@@ -5,7 +5,8 @@
 // Needs: env.DB (D1), env.MEDIA (R2 bucket binding), env.ADMIN_PASSWORD (secret).
 
 import { ADMIN_HTML } from './admin-page.js';
-import { secretOf, hmac, safeEqual, signToken, verifyToken, bearer, isAdminSubject } from './auth.js';
+import { secretOf, hmac, safeEqual, signToken, verifyToken, bearer, isAdminSubject, adminListUsers, adminResetPassword, adminUserCount } from './auth.js';
+import { ensureSchema } from './schema.js';
 
 const CATEGORIES = new Set(['mog', 'songs', 'prayer']);
 const AUDIO_TYPES = {
@@ -216,7 +217,8 @@ async function uploadPhoto(request, env, id) {
 
 async function listItems(env, speakerId) {
   const { results } = await env.DB.prepare(
-    'SELECT id, title, duration_sec, published_at FROM items WHERE speaker_id = ? ORDER BY published_at DESC, title'
+    `SELECT id, title, duration_sec, published_at, preached_on, series, description, plays FROM items WHERE speaker_id = ?
+     ORDER BY COALESCE(NULLIF(preached_on, ''), substr(published_at, 1, 10)) DESC, published_at DESC, title`
   )
     .bind(speakerId)
     .all();
@@ -225,10 +227,65 @@ async function listItems(env, speakerId) {
 
 async function renameItem(request, env, id) {
   const b = await request.json().catch(() => null);
-  const title = String((b && b.title) || '').trim();
-  if (!title || title.length > 200) return fail('Title is required (max 200 characters)');
-  await env.DB.prepare('UPDATE items SET title = ? WHERE id = ?').bind(title, id).run();
+  if (!b) return fail('Invalid request');
+  const sets = [];
+  const vals = [];
+  if ('title' in b) {
+    const title = String(b.title || '').trim();
+    if (!title || title.length > 200) return fail('Title is required (max 200 characters)');
+    sets.push('title = ?');
+    vals.push(title);
+  }
+  if ('preached_on' in b) {
+    const d = String(b.preached_on || '').trim();
+    if (d && !/^\d{4}-\d{2}-\d{2}$/.test(d)) return fail('Date must look like 2024-03-17');
+    if (d) {
+      const dt = new Date(d + 'T00:00:00Z');
+      if (Number.isNaN(dt.getTime()) || dt.toISOString().slice(0, 10) !== d) return fail('That date does not exist');
+    }
+    sets.push('preached_on = ?');
+    vals.push(d || null);
+  }
+  if ('series' in b) {
+    const t = String(b.series || '').trim();
+    if (t.length > 80) return fail('Series is too long (max 80 characters)');
+    sets.push('series = ?');
+    vals.push(t || null);
+  }
+  if ('description' in b) {
+    const t = String(b.description || '').trim();
+    if (t.length > 1000) return fail('Description is too long (max 1000 characters)');
+    sets.push('description = ?');
+    vals.push(t || null);
+  }
+  if (sets.length === 0) return fail('Nothing to change');
+  await env.DB.prepare(`UPDATE items SET ${sets.join(', ')} WHERE id = ?`).bind(...vals, id).run();
   return json({ ok: true });
+}
+
+async function stats(env) {
+  const totals = await env.DB.prepare(
+    'SELECT COUNT(*) AS items, COALESCE(SUM(plays), 0) AS plays FROM items'
+  ).first();
+  const sp = await env.DB.prepare('SELECT COUNT(*) AS n FROM speakers').first();
+  const { results } = await env.DB.prepare(
+    `SELECT i.id, i.title, i.plays, s.name AS speaker_name
+     FROM items i JOIN speakers s ON s.id = i.speaker_id
+     WHERE i.plays > 0 ORDER BY i.plays DESC, i.title LIMIT 10`
+  ).all();
+  return json({
+    items: totals ? totals.items : 0,
+    plays: totals ? totals.plays : 0,
+    folders: sp ? sp.n : 0,
+    users: await adminUserCount(env),
+    top: results,
+  });
+}
+
+async function resetUser(env, id) {
+  const r = await adminResetPassword(env, id);
+  if (!r) return fail('Account not found', 404);
+  return json(r);
 }
 
 async function deleteItem(env, id) {
@@ -361,6 +418,12 @@ export async function handleAdmin(request, env) {
 
   const p = path.slice('/admin/api'.length);
   try {
+    await ensureSchema(env);
+    if (p === '/stats' && method === 'GET') return await stats(env);
+    if (p === '/users' && method === 'GET') return json(await adminListUsers(env));
+    const um = p.match(/^\/users\/([^/]+)\/reset$/);
+    if (um && method === 'POST') return await resetUser(env, decodeURIComponent(um[1]));
+
     if (p === '/speakers' && method === 'GET') return await listSpeakers(env, url.searchParams.get('category') || 'mog');
     if (p === '/speakers' && method === 'POST') return await saveSpeaker(request, env);
 
