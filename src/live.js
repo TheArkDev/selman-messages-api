@@ -27,27 +27,49 @@ export function normaliseChannel(input) {
   return { path: '/' + m[1], url: 'https://www.youtube.com/' + m[1] };
 }
 
-export async function getChannel(env) {
-  const row = await env.DB.prepare("SELECT value FROM settings WHERE key = 'live_channel'").first();
-  return row && row.value ? normaliseChannel(row.value) : null;
+const MAX_CHANNELS = 20;
+
+function newId() {
+  const b = new Uint8Array(5);
+  crypto.getRandomValues(b);
+  return 'lc-' + [...b].map((x) => (x % 36).toString(36)).join('');
 }
 
-export async function setChannel(env, input) {
-  const raw = String(input || '').trim();
-  if (!raw) {
-    await env.DB.prepare("DELETE FROM settings WHERE key = 'live_channel'").run();
+export async function listChannels(env) {
+  const { results } = await env.DB.prepare(
+    'SELECT id, name, url FROM live_channels ORDER BY sort, name COLLATE NOCASE'
+  ).all();
+  return results || [];
+}
+
+/** Adds or updates one ministry. Returns the saved row or { error }. */
+export async function saveChannel(env, body) {
+  const name = String((body && body.name) || '').trim().slice(0, 80);
+  if (!name) return { error: 'Please enter the ministry name' };
+  const ch = normaliseChannel(body && body.url);
+  if (!ch) return { error: 'That is not a YouTube channel link. Use a link like https://www.youtube.com/@channelname' };
+
+  const id = body && body.id ? String(body.id) : '';
+  if (id) {
+    const r = await env.DB.prepare('UPDATE live_channels SET name = ?, url = ? WHERE id = ?').bind(name, ch.url, id).run();
     cache.clear();
-    return null;
+    return { id, name, url: ch.url, updated: r };
   }
-  const ch = normaliseChannel(raw);
-  if (!ch) return undefined; // not a usable YouTube channel link
-  await env.DB.prepare(
-    "INSERT INTO settings (key, value) VALUES ('live_channel', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value"
-  )
-    .bind(ch.url)
+  const n = await env.DB.prepare('SELECT COUNT(*) AS n FROM live_channels').first();
+  if (n && n.n >= MAX_CHANNELS) return { error: `You can add up to ${MAX_CHANNELS} channels` };
+  const dup = await env.DB.prepare('SELECT id FROM live_channels WHERE url = ?').bind(ch.url).first();
+  if (dup) return { error: 'That channel is already in the list' };
+  const nid = newId();
+  await env.DB.prepare('INSERT INTO live_channels (id, name, url, sort) VALUES (?, ?, ?, ?)')
+    .bind(nid, name, ch.url, Date.now() % 1000000000)
     .run();
   cache.clear();
-  return ch;
+  return { id: nid, name, url: ch.url };
+}
+
+export async function deleteChannel(env, id) {
+  await env.DB.prepare('DELETE FROM live_channels WHERE id = ?').bind(id).run();
+  cache.clear();
 }
 
 function decode(s) {
@@ -68,16 +90,14 @@ export function parseLivePage(html) {
   return { live: true, video_id: canon[1], title: t ? decode(t[1]) : '' };
 }
 
-export async function liveStatus(env, fetchFn = fetch) {
-  const ch = await getChannel(env);
-  if (!ch) return { configured: false, live: false };
-
-  const hit = cache.get(ch.path);
-  if (hit && Date.now() - hit.at < CACHE_MS) return hit.data;
-
-  let data;
+async function checkOne(ch, fetchFn) {
+  const base = { id: ch.id, name: ch.name, channel_url: ch.url };
+  const key = ch.url;
+  const hit = cache.get(key);
+  if (hit && Date.now() - hit.at < CACHE_MS) return { ...base, ...hit.data };
   try {
-    const res = await fetchFn('https://www.youtube.com' + ch.path + '/live', {
+    const path = normaliseChannel(ch.url).path;
+    const res = await fetchFn('https://www.youtube.com' + path + '/live', {
       headers: {
         'user-agent': UA,
         'accept-language': 'en-US,en;q=0.9',
@@ -87,19 +107,24 @@ export async function liveStatus(env, fetchFn = fetch) {
     });
     if (!res.ok) throw new Error('status ' + res.status);
     const p = parseLivePage(await res.text());
-    data = {
-      configured: true,
-      channel_url: ch.url,
+    const data = {
       live: p.live,
       video_id: p.video_id || null,
       title: p.title || null,
       thumbnail: p.video_id ? `https://i.ytimg.com/vi/${p.video_id}/hqdefault.jpg` : null,
-      checked_at: new Date().toISOString(),
     };
+    cache.set(key, { at: Date.now(), data });
+    return { ...base, ...data };
   } catch (e) {
-    // Don't cache a failure; report "not live" and let the app retry later.
-    return { configured: true, channel_url: ch.url, live: false, video_id: null, title: null, thumbnail: null, error: true };
+    // A failure is not cached; the channel just shows as "not live" until the next check.
+    return { ...base, live: false, video_id: null, title: null, thumbnail: null, error: true };
   }
-  cache.set(ch.path, { at: Date.now(), data });
-  return data;
+}
+
+/** Every saved channel with its live state, checked in parallel. */
+export async function liveAll(env, fetchFn = fetch) {
+  const rows = await listChannels(env);
+  const channels = await Promise.all(rows.map((r) => checkOne(r, fetchFn)));
+  channels.sort((a, b) => Number(b.live) - Number(a.live)); // live ones first (stable)
+  return { channels };
 }
