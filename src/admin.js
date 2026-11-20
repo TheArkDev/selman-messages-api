@@ -7,7 +7,7 @@
 import { ADMIN_HTML } from './admin-page.js';
 import { secretOf, hmac, safeEqual, signToken, verifyToken, bearer, isAdminSubject, adminListUsers, adminResetPassword, adminUserCount } from './auth.js';
 import { ensureSchema } from './schema.js';
-import { getChannel, setChannel } from './live.js';
+import { listChannels, saveChannel, deleteChannel } from './live.js';
 
 const CATEGORIES = new Set(['mog', 'songs', 'prayer']);
 const AUDIO_TYPES = {
@@ -421,15 +421,16 @@ export async function handleAdmin(request, env) {
   try {
     await ensureSchema(env);
     if (p === '/stats' && method === 'GET') return await stats(env);
-    if (p === '/live-channel' && method === 'GET') {
-      const ch = await getChannel(env);
-      return json({ url: ch ? ch.url : '' });
-    }
-    if (p === '/live-channel' && method === 'PUT') {
+    if (p === '/live-channels' && method === 'GET') return json(await listChannels(env));
+    if (p === '/live-channels' && method === 'POST') {
       const b = await request.json().catch(() => null);
-      const ch = await setChannel(env, b && b.url);
-      if (ch === undefined) return fail('That is not a YouTube channel link. Use a link like https://www.youtube.com/@channelname');
-      return json({ url: ch ? ch.url : '' });
+      const r = await saveChannel(env, b);
+      return r.error ? fail(r.error) : json({ id: r.id, name: r.name, url: r.url });
+    }
+    const lm = p.match(/^\/live-channels\/([^/]+)$/);
+    if (lm && method === 'DELETE') {
+      await deleteChannel(env, decodeURIComponent(lm[1]));
+      return json({ ok: true });
     }
     if (p === '/users' && method === 'GET') return json(await adminListUsers(env));
     const um = p.match(/^\/users\/([^/]+)\/reset$/);
