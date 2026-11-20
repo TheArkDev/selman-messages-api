@@ -69,6 +69,7 @@ export async function saveChannel(env, body) {
 
 export async function deleteChannel(env, id) {
   await env.DB.prepare('DELETE FROM live_channels WHERE id = ?').bind(id).run();
+  await env.DB.prepare('DELETE FROM live_seen WHERE channel_id = ?').bind(id).run();
   cache.clear();
 }
 
@@ -90,41 +91,96 @@ export function parseLivePage(html) {
   return { live: true, video_id: canon[1], title: t ? decode(t[1]) : '' };
 }
 
-async function checkOne(ch, fetchFn) {
+const SEEN_MS = 10 * 60 * 1000; // how long a "live" result is trusted when YouTube gives a bad answer
+
+const FETCH_HEADERS = {
+  'user-agent': UA,
+  'accept-language': 'en-US,en;q=0.9',
+  cookie: 'CONSENT=YES+1; SOCS=CAI',
+};
+
+/** A real YouTube page has this data in it; a consent / blocked page does not. */
+const looksLikeYouTube = (html) => html.includes('ytInitialData') || html.includes('ytInitialPlayerResponse');
+
+/** Is this one video still live? Returns 'live' | 'off' | 'unknown'. */
+export async function verifyVideo(videoId, fetchFn = fetch) {
+  try {
+    const res = await fetchFn('https://www.youtube.com/watch?v=' + videoId, { headers: FETCH_HEADERS, redirect: 'follow' });
+    if (!res.ok) return 'unknown';
+    const html = await res.text();
+    if (!html.includes('"videoDetails"')) return 'unknown'; // consent / blocked page
+    return /"isLive":true/.test(html) ? 'live' : 'off';
+  } catch (_) {
+    return 'unknown';
+  }
+}
+
+async function checkOne(env, ch, fetchFn) {
   const base = { id: ch.id, name: ch.name, channel_url: ch.url };
   const key = ch.url;
   const hit = cache.get(key);
   if (hit && Date.now() - hit.at < CACHE_MS) return { ...base, ...hit.data };
+
+  const make = (videoId, title) => ({
+    live: true,
+    video_id: videoId,
+    title: title || null,
+    thumbnail: `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`,
+  });
+
+  // 1. Ask YouTube. state: 'live' | 'off' | 'unknown' (YouTube gave us a bad page).
+  let state = 'unknown';
+  let found = null;
   try {
     const path = normaliseChannel(ch.url).path;
-    const res = await fetchFn('https://www.youtube.com' + path + '/live', {
-      headers: {
-        'user-agent': UA,
-        'accept-language': 'en-US,en;q=0.9',
-        cookie: 'CONSENT=YES+1; SOCS=CAI',
-      },
-      redirect: 'follow',
-    });
-    if (!res.ok) throw new Error('status ' + res.status);
-    const p = parseLivePage(await res.text());
-    const data = {
-      live: p.live,
-      video_id: p.video_id || null,
-      title: p.title || null,
-      thumbnail: p.video_id ? `https://i.ytimg.com/vi/${p.video_id}/hqdefault.jpg` : null,
-    };
+    const res = await fetchFn('https://www.youtube.com' + path + '/live', { headers: FETCH_HEADERS, redirect: 'follow' });
+    if (res.ok) {
+      const html = await res.text();
+      const p = parseLivePage(html);
+      if (p.live) {
+        state = 'live';
+        found = p;
+      } else if (looksLikeYouTube(html)) {
+        state = 'off';
+      }
+    }
+  } catch (_) {}
+
+  if (state === 'live') {
+    const data = make(found.video_id, found.title);
+    await env.DB.prepare(
+      'INSERT INTO live_seen (channel_id, video_id, title, seen_at) VALUES (?, ?, ?, ?) ON CONFLICT(channel_id) DO UPDATE SET video_id = excluded.video_id, title = excluded.title, seen_at = excluded.seen_at'
+    ).bind(ch.id, data.video_id, data.title, Date.now()).run();
     cache.set(key, { at: Date.now(), data });
     return { ...base, ...data };
-  } catch (e) {
-    // A failure is not cached; the channel just shows as "not live" until the next check.
-    return { ...base, live: false, video_id: null, title: null, thumbnail: null, error: true };
   }
+
+  // 2. Not live (or unknown). If we saw it live a moment ago, don't flip off on one
+  //    answer: check that same video directly, and only switch off if it has really ended.
+  const seen = await env.DB.prepare('SELECT video_id, title, seen_at FROM live_seen WHERE channel_id = ?').bind(ch.id).first();
+  if (seen && Date.now() - seen.seen_at < SEEN_MS) {
+    const v = await verifyVideo(seen.video_id, fetchFn);
+    if (v !== 'off') {
+      const data = make(seen.video_id, seen.title);
+      cache.set(key, { at: Date.now(), data });
+      return { ...base, ...data };
+    }
+  }
+  if (seen) await env.DB.prepare('DELETE FROM live_seen WHERE channel_id = ?').bind(ch.id).run();
+
+  const off = { live: false, video_id: null, title: null, thumbnail: null };
+  if (state === 'off') {
+    cache.set(key, { at: Date.now(), data: off });
+    return { ...base, ...off };
+  }
+  // Unknown and nothing recent: say "not live" but flag it, and don't cache it.
+  return { ...base, ...off, error: true };
 }
 
 /** Every saved channel with its live state, checked in parallel. */
 export async function liveAll(env, fetchFn = fetch) {
   const rows = await listChannels(env);
-  const channels = await Promise.all(rows.map((r) => checkOne(r, fetchFn)));
+  const channels = await Promise.all(rows.map((r) => checkOne(env, r, fetchFn)));
   channels.sort((a, b) => Number(b.live) - Number(a.live)); // live ones first (stable)
   return { channels };
 }
