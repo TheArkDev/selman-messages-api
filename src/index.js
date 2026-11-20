@@ -1,7 +1,7 @@
 import { handleAdmin } from './admin.js';
 import { handleAuth } from './auth.js';
 import { ensureSchema } from './schema.js';
-import { liveStatus } from './live.js';
+import { liveAll } from './live.js';
 
 // Selman Messages API - Cloudflare Worker
 // D1 holds the metadata, R2 holds the audio and images.
@@ -10,7 +10,7 @@ import { liveStatus } from './live.js';
 //   GET /api/speakers?category=mog     -> folders for MOG | songs | prayer
 //   GET /api/speakers/:id/items        -> everything inside one folder
 //   GET /api/search?q=faith            -> messages whose title, speaker or series match
-//   GET /api/live                      -> is the YouTube channel live right now?
+//   GET /api/live                      -> every live channel and whether it is streaming now
 //   POST /api/items/:id/play           -> counts one listen
 
 const CATEGORIES = new Set(['mog', 'songs', 'prayer']);
@@ -243,7 +243,7 @@ export default {
     try {
       if (path !== '' && path !== '/') await ensureSchema(env);
       if (path === '/api/home') return await handleHome(env);
-      if (path === '/api/live') return json(await liveStatus(env), 200, 30);
+      if (path === '/api/live') return json(await liveAll(env), 200, 30);
       if (path === '/api/search') return await handleSearch(env, url.searchParams.get('q'));
       if (path === '/api/speakers') {
         return await handleSpeakers(env, url.searchParams.get('category') || 'mog');
