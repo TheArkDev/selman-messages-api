@@ -17,6 +17,8 @@ export function ensureSchema(env) {
       for (const [name, def] of NEW_COLUMNS) {
         if (!have.has(name)) await env.DB.prepare(`ALTER TABLE items ADD COLUMN ${name} ${def}`).run();
       }
+      // Small key/value table for app-wide settings (e.g. the live YouTube channel).
+      await env.DB.prepare('CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)').run();
     })().catch((e) => {
       ready = null; // try again on the next request
       throw e;
