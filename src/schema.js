@@ -25,6 +25,10 @@ export function ensureSchema(env) {
       await env.DB.prepare(
         'CREATE TABLE IF NOT EXISTS live_state (channel_id TEXT PRIMARY KEY, video_id TEXT)'
       ).run();
+      // Last time each channel was seen live (keeps one bad YouTube answer from switching it off).
+      await env.DB.prepare(
+        'CREATE TABLE IF NOT EXISTS live_seen (channel_id TEXT PRIMARY KEY, video_id TEXT, title TEXT, seen_at INTEGER)'
+      ).run();
       // The ministries whose YouTube channels the Live tab follows.
       await env.DB.prepare(
         'CREATE TABLE IF NOT EXISTS live_channels (id TEXT PRIMARY KEY, name TEXT NOT NULL, url TEXT NOT NULL, sort INTEGER NOT NULL DEFAULT 100)'
