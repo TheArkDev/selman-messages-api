@@ -7,6 +7,7 @@
 import { ADMIN_HTML } from './admin-page.js';
 import { secretOf, hmac, safeEqual, signToken, verifyToken, bearer, isAdminSubject, adminListUsers, adminResetPassword, adminUserCount } from './auth.js';
 import { ensureSchema } from './schema.js';
+import { getChannel, setChannel } from './live.js';
 
 const CATEGORIES = new Set(['mog', 'songs', 'prayer']);
 const AUDIO_TYPES = {
@@ -420,6 +421,16 @@ export async function handleAdmin(request, env) {
   try {
     await ensureSchema(env);
     if (p === '/stats' && method === 'GET') return await stats(env);
+    if (p === '/live-channel' && method === 'GET') {
+      const ch = await getChannel(env);
+      return json({ url: ch ? ch.url : '' });
+    }
+    if (p === '/live-channel' && method === 'PUT') {
+      const b = await request.json().catch(() => null);
+      const ch = await setChannel(env, b && b.url);
+      if (ch === undefined) return fail('That is not a YouTube channel link. Use a link like https://www.youtube.com/@channelname');
+      return json({ url: ch ? ch.url : '' });
+    }
     if (p === '/users' && method === 'GET') return json(await adminListUsers(env));
     const um = p.match(/^\/users\/([^/]+)\/reset$/);
     if (um && method === 'POST') return await resetUser(env, decodeURIComponent(um[1]));
