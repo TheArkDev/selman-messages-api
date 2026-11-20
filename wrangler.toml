@@ -3,6 +3,9 @@ main = "src/index.js"
 compatibility_date = "2026-01-01"
 keep_vars = true
 
+[triggers]
+crons = ["*/2 * * * *"]
+
 # ...
 [vars]
 MEDIA_BASE_URL = "https://pub-b64733ce0d204ae3864a858b02a2455e.r2.dev"
