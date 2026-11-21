@@ -1,7 +1,8 @@
 import { handleAdmin } from './admin.js';
 import { handleAuth } from './auth.js';
 import { ensureSchema } from './schema.js';
-import { liveAll, debugAll } from './live.js';
+import * as liveMod from './live.js';
+const liveAll = (env) => liveMod.liveAll(env);
 import { activeNotices } from './notices.js';
 import { privacyPage, deleteAccountPage } from './privacy.js';
 import { runLiveAlerts } from './alerts.js';
@@ -251,7 +252,7 @@ export default {
     try {
       if (path !== '' && path !== '/') await ensureSchema(env);
       if (path === '/api/home') return await handleHome(env);
-      if (path === '/api/live-debug') return json(await debugAll(env), 200, 0);
+      if (path === '/api/live-debug') return json(liveMod.debugAll ? await liveMod.debugAll(env) : { note: 'debug not installed' }, 200, 0);
       if (path === '/api/live') return json(await liveAll(env), 200, 30);
       if (path === '/api/notices') return json(await activeNotices(env), 200, 60);
       if (path === '/api/search') return await handleSearch(env, url.searchParams.get('q'));
