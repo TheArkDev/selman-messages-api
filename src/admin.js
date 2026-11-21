@@ -170,12 +170,14 @@ async function saveSpeaker(request, env) {
   if (!CATEGORIES.has(b.category)) return fail('Unknown category');
   const glow = validColor(b.glow) ? b.glow.toUpperCase() : '#FFC107';
   const sort = Number.isFinite(Number(b.sort)) ? Math.trunc(Number(b.sort)) : 100;
+  const bio = String(b.bio || '').trim().slice(0, 800);
 
   if (b.id) {
     const existing = await getSpeaker(env, String(b.id));
     if (!existing) return fail('Folder not found', 404);
-    await env.DB.prepare('UPDATE speakers SET name = ?, glow = ?, sort = ? WHERE id = ?')
-      .bind(name, glow, sort, existing.id)
+    // A bio only changes when the app sends one (older app versions leave it alone).
+    await env.DB.prepare('UPDATE speakers SET name = ?, glow = ?, sort = ?, bio = CASE WHEN ? THEN ? ELSE bio END WHERE id = ?')
+      .bind(name, glow, sort, 'bio' in b ? 1 : 0, bio || null, existing.id)
       .run();
     return json({ id: existing.id });
   }
@@ -183,11 +185,25 @@ async function saveSpeaker(request, env) {
   let id = slug(name) || 'folder';
   if (await getSpeaker(env, id)) id = `${id}-${rand(4)}`;
   await env.DB.prepare(
-    'INSERT INTO speakers (id, category, name, image_key, glow, sort) VALUES (?, ?, ?, NULL, ?, ?)'
+    'INSERT INTO speakers (id, category, name, image_key, glow, sort, bio) VALUES (?, ?, ?, NULL, ?, ?, ?)'
   )
-    .bind(id, b.category, name, glow, sort)
+    .bind(id, b.category, name, glow, sort, bio || null)
     .run();
   return json({ id });
+}
+
+// Saves the folder order the admin dragged into: ids come in the order they should appear.
+async function reorderSpeakers(request, env) {
+  const b = await request.json().catch(() => null);
+  if (!b || !CATEGORIES.has(b.category) || !Array.isArray(b.ids) || b.ids.length > 200) return fail('Invalid request');
+  let i = 0;
+  for (const raw of b.ids) {
+    i += 10;
+    await env.DB.prepare('UPDATE speakers SET sort = ? WHERE id = ? AND category = ?')
+      .bind(i, String(raw), b.category)
+      .run();
+  }
+  return json({ ok: true });
 }
 
 async function deleteSpeaker(env, id) {
@@ -459,6 +475,8 @@ export async function handleAdmin(request, env) {
 
     if (p === '/speakers' && method === 'GET') return await listSpeakers(env, url.searchParams.get('category') || 'mog');
     if (p === '/speakers' && method === 'POST') return await saveSpeaker(request, env);
+
+    if (p === '/speakers/reorder' && method === 'POST') return await reorderSpeakers(request, env);
 
     let m = p.match(/^\/speakers\/([^/]+)$/);
     if (m && method === 'DELETE') return await deleteSpeaker(env, decodeURIComponent(m[1]));
