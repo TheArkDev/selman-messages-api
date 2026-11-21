@@ -4,6 +4,7 @@
 //   POST /api/auth/login     { email, password }        -> { token, user }
 //   GET  /api/auth/me        (Bearer token)             -> { user }
 //   POST /api/auth/change-password { current, password } (Bearer token)
+//   GET/PUT /api/auth/sync   (Bearer token) -> the listener's favourites, playlists and history
 //   POST /api/auth/delete    { password } (Bearer token) -> deletes the account
 //   POST /api/auth/forgot    { email }                  -> emails a 6-digit code (if mail is set up)
 //   POST /api/auth/reset     { email, code, password }  -> { token, user }
@@ -241,6 +242,59 @@ async function changePassword(request, env) {
   return json({ ok: true });
 }
 
+// ---- sync favourites / playlists / history across phones ----------------------
+const MAX_SYNC_BYTES = 900000;
+let userDataReady = false;
+async function ensureUserData(env) {
+  if (userDataReady) return;
+  await env.DB.prepare(
+    'CREATE TABLE IF NOT EXISTS user_data (user_id TEXT PRIMARY KEY, data TEXT NOT NULL, updated_at INTEGER NOT NULL)'
+  ).run();
+  userDataReady = true;
+}
+
+async function syncUser(request, env) {
+  const subject = await verifyToken(env, bearer(request));
+  if (!subject || subject === 'web') return null;
+  await ensureUsers(env);
+  const u = await env.DB.prepare('SELECT id FROM users WHERE id = ?').bind(subject).first();
+  return u ? u.id : null;
+}
+
+async function getSync(request, env) {
+  const id = await syncUser(request, env);
+  if (!id) return fail('Not signed in', 401);
+  await ensureUserData(env);
+  const row = await env.DB.prepare('SELECT data, updated_at FROM user_data WHERE user_id = ?').bind(id).first();
+  let data = null;
+  try {
+    data = row ? JSON.parse(row.data) : null;
+  } catch (_) {}
+  return json({ data, updated_at: row ? row.updated_at : 0 });
+}
+
+async function putSync(request, env) {
+  const id = await syncUser(request, env);
+  if (!id) return fail('Not signed in', 401);
+  const text = await request.text();
+  if (text.length > MAX_SYNC_BYTES) return fail('Too much data to sync', 413);
+  let b;
+  try {
+    b = JSON.parse(text);
+  } catch (_) {
+    return fail('Invalid request');
+  }
+  if (!b || typeof b.data !== 'object' || b.data === null || Array.isArray(b.data)) return fail('Invalid request');
+  await ensureUserData(env);
+  const now = Date.now();
+  await env.DB.prepare(
+    'INSERT INTO user_data (user_id, data, updated_at) VALUES (?, ?, ?) ON CONFLICT(user_id) DO UPDATE SET data = excluded.data, updated_at = excluded.updated_at'
+  )
+    .bind(id, JSON.stringify(b.data), now)
+    .run();
+  return json({ ok: true, updated_at: now });
+}
+
 // ---- delete account (required by Google Play for apps with sign-up) -------------
 async function deleteAccount(request, env) {
   const subject = await verifyToken(env, bearer(request));
@@ -258,6 +312,8 @@ async function deleteAccount(request, env) {
   await ensureResets(env);
   await env.DB.prepare('DELETE FROM password_resets WHERE email = ?').bind(u.email).run();
   await env.DB.prepare('DELETE FROM users WHERE id = ?').bind(u.id).run();
+  await ensureUserData(env);
+  await env.DB.prepare('DELETE FROM user_data WHERE user_id = ?').bind(u.id).run();
   return json({ ok: true });
 }
 
@@ -397,6 +453,8 @@ export async function handleAuth(request, env) {
     if (path === '/api/auth/login' && request.method === 'POST') return await login(request, env);
     if (path === '/api/auth/me' && request.method === 'GET') return await me(request, env);
     if (path === '/api/auth/change-password' && request.method === 'POST') return await changePassword(request, env);
+    if (path === '/api/auth/sync' && request.method === 'GET') return await getSync(request, env);
+    if (path === '/api/auth/sync' && request.method === 'PUT') return await putSync(request, env);
     if (path === '/api/auth/delete' && request.method === 'POST') return await deleteAccount(request, env);
     if (path === '/api/auth/forgot' && request.method === 'POST') return await forgot(request, env);
     if (path === '/api/auth/reset' && request.method === 'POST') return await reset(request, env);
