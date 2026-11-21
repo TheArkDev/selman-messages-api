@@ -5,7 +5,7 @@ const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&l
 function page(title, body) {
   return new Response(
     `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>${esc(title)} - Selman Messages</title>
+<title>${esc(title)} - The Message</title>
 <style>body{font:16px/1.6 system-ui,sans-serif;max-width:720px;margin:0 auto;padding:24px 18px;color:#1d1d1d;background:#fffdf8}
 h1{color:#6d0f26}h2{color:#6d0f26;margin-top:1.6em}a{color:#6d0f26}code{background:#f1e9d3;padding:1px 5px;border-radius:4px}</style></head>
 <body>${body}</body></html>`,
@@ -20,7 +20,7 @@ export function privacyPage(env) {
   return page(
     'Privacy Policy',
     `<h1>Privacy Policy</h1>
-<p>Selman Messages is an app for listening to sermons, songs and prayers, and for watching live church services. This page explains what the app collects and why.</p>
+<p>The Message is an app for listening to sermons, songs and prayers, and for watching live church services. This page explains what the app collects and why.</p>
 
 <h2>What we collect</h2>
 <ul>
@@ -30,8 +30,8 @@ export function privacyPage(env) {
 <li><b>Crash reports</b> - if the app crashes, Firebase Crashlytics receives technical details (device model, Android version, the error). It does not include your name or messages.</li>
 </ul>
 
-<h2>What stays on your phone</h2>
-<p>Your favourites, recently played list and where you stopped in each message are saved only on your phone. They are not sent to us.</p>
+<h2>Favourites, playlists and history</h2>
+<p>These are saved on your phone. If you are signed in, they are also saved with your account so they follow you to a new phone, and they are deleted when you delete your account. If you are not signed in, they stay only on your phone. Messages you download for offline listening are stored privately on your phone and are never sent to us.</p>
 
 <h2>Live videos</h2>
 <p>The Live tab plays videos with the YouTube player. YouTube (Google) may collect data according to <a href="https://policies.google.com/privacy">Google's privacy policy</a>.</p>
@@ -62,7 +62,7 @@ export function deleteAccountPage(env) {
 <li>Go to the <b>Profile</b> tab.</li>
 <li>Tap <b>Delete my account</b> and enter your password to confirm.</li>
 </ol>
-<p><b>What is deleted:</b> your name, email address and password hash are removed straight away. Your favourites and history are stored only on your phone and are removed when you uninstall the app or clear its data.</p>
+<p><b>What is deleted:</b> your name, email address, password hash and synced favourites, playlists and history are removed straight away. Copies kept on your phone (including downloads) are removed when you uninstall the app or clear its data.</p>
 <p>If you cannot sign in, email ${contact} from the address you registered with and we will delete the account for you.</p>
 <p><a href="/privacy">Read the privacy policy</a></p>`
   );
