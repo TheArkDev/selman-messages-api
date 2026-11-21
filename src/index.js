@@ -1,7 +1,7 @@
 import { handleAdmin } from './admin.js';
 import { handleAuth } from './auth.js';
 import { ensureSchema } from './schema.js';
-import { liveAll } from './live.js';
+import { liveAll, debugAll } from './live.js';
 import { activeNotices } from './notices.js';
 import { privacyPage, deleteAccountPage } from './privacy.js';
 import { runLiveAlerts } from './alerts.js';
@@ -49,6 +49,7 @@ function mapSpeaker(env, r) {
     name: r.name,
     image_url: mediaUrl(env, r.image_key),
     glow: r.glow,
+    bio: r.bio || null,
     count: r.count ?? 0,
   };
 }
@@ -131,7 +132,7 @@ const TRACK_SELECT = `
 // ---- handlers ----------------------------------------------------------------
 async function handleHome(env) {
   const { results } = await env.DB.prepare(
-    `${TRACK_SELECT} WHERE i.category = 'mog' ORDER BY i.id LIMIT 2000`
+    `${TRACK_SELECT} WHERE i.category = 'mog' AND LOWER(s.name) NOT LIKE '%selman%' ORDER BY i.id LIMIT 2000`
   ).all();
 
   const day = dayKey();
@@ -250,6 +251,7 @@ export default {
     try {
       if (path !== '' && path !== '/') await ensureSchema(env);
       if (path === '/api/home') return await handleHome(env);
+      if (path === '/api/live-debug') return json(await debugAll(env), 200, 0);
       if (path === '/api/live') return json(await liveAll(env), 200, 30);
       if (path === '/api/notices') return json(await activeNotices(env), 200, 60);
       if (path === '/api/search') return await handleSearch(env, url.searchParams.get('q'));
