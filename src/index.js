@@ -140,7 +140,7 @@ async function handleHome(env) {
   const featured = pickMixed(results, 6, mulberry32(hashString(`featured-${day}`)));
   const used = new Set(featured.map((r) => r.id));
   const rest = results.filter((r) => !used.has(r.id));
-  const suggested = shuffle(rest, mulberry32(hashString(`suggested-${day}`))).slice(0, 20);
+  const suggested = shuffle(rest, mulberry32(hashString(`suggested-${day}`))).slice(0, 10);
 
   return json(
     {
