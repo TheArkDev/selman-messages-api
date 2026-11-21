@@ -17,6 +17,15 @@ export function ensureSchema(env) {
       for (const [name, def] of NEW_COLUMNS) {
         if (!have.has(name)) await env.DB.prepare(`ALTER TABLE items ADD COLUMN ${name} ${def}`).run();
       }
+      // Short biography shown at the top of a speaker's folder.
+      const sp = await env.DB.prepare('PRAGMA table_info(speakers)').all();
+      if (!(sp.results || []).some((r) => r.name === 'bio')) {
+        await env.DB.prepare('ALTER TABLE speakers ADD COLUMN bio TEXT').run();
+      }
+      // Each signed-in listener's favourites / playlists / history, so they follow them to a new phone.
+      await env.DB.prepare(
+        'CREATE TABLE IF NOT EXISTS user_data (user_id TEXT PRIMARY KEY, data TEXT NOT NULL, updated_at INTEGER NOT NULL)'
+      ).run();
       // Announcements shown on Home.
       await env.DB.prepare(
         'CREATE TABLE IF NOT EXISTS notices (id TEXT PRIMARY KEY, title TEXT NOT NULL, body TEXT, event_date TEXT, expires_on TEXT, created_at TEXT NOT NULL DEFAULT (datetime(\'now\')))'
