@@ -133,7 +133,7 @@ const TRACK_SELECT = `
 // ---- handlers ----------------------------------------------------------------
 async function handleHome(env) {
   const { results } = await env.DB.prepare(
-    `${TRACK_SELECT} WHERE i.category = 'mog' AND LOWER(s.name) NOT LIKE '%selman%' ORDER BY i.id LIMIT 2000`
+    `${TRACK_SELECT} WHERE i.category = 'mog' ORDER BY i.id LIMIT 2000`
   ).all();
 
   const day = dayKey();
