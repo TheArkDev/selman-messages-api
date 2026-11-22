@@ -58,7 +58,7 @@ export function deleteAccountPage(env) {
     'Delete your account',
     `<h1>Delete your account</h1>
 <ol>
-<li>Open the Selman Messages app and sign in.</li>
+<li>Open the The Message app and sign in.</li>
 <li>Go to the <b>Profile</b> tab.</li>
 <li>Tap <b>Delete my account</b> and enter your password to confirm.</li>
 </ol>
