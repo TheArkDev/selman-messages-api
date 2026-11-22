@@ -8,7 +8,7 @@ export const ADMIN_HTML = String.raw`<!doctype html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex">
-<title>Selman Messages Admin</title>
+<title>The Message Admin</title>
 <style>
   :root { --gold:#d4af37; --lgold:#f1d68a; --maroon:#6d0f26; --deep:#2a0610; --green:#1f7a45; --black:#0b0b0b; }
   * { box-sizing: border-box; }
@@ -49,7 +49,7 @@ export const ADMIN_HTML = String.raw`<!doctype html>
 </head>
 <body>
 <header>
-  <h1>Selman Messages &middot; Admin</h1>
+  <h1>The Message &middot; Admin</h1>
   <button class="ghost" id="logout" hidden>Sign out</button>
 </header>
 <main>
