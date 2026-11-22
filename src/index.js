@@ -7,7 +7,7 @@ import { activeNotices } from './notices.js';
 import { privacyPage, deleteAccountPage } from './privacy.js';
 import { runLiveAlerts } from './alerts.js';
 
-// Selman Messages API - Cloudflare Worker
+// The Message API - Cloudflare Worker
 // D1 holds the metadata, R2 holds the audio and images.
 //
 //   GET /api/home                      -> { featured: [...], suggested: [...] }
