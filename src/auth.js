@@ -1,4 +1,4 @@
-// Accounts and roles for Selman Messages.
+// Accounts and roles for The Message.
 //
 //   POST /api/auth/register  { name, email, password }  -> { token, user }
 //   POST /api/auth/login     { email, password }        -> { token, user }
@@ -10,7 +10,7 @@
 //   POST /api/auth/reset     { email, code, password }  -> { token, user }
 //
 // Password reset by email needs two settings: RESEND_API_KEY (secret) and
-// MAIL_FROM (e.g. "Selman Messages <no-reply@yourdomain.com>"). Without them,
+// MAIL_FROM (e.g. "The Message <no-reply@yourdomain.com>"). Without them,
 // an admin can reset a password from the app (admin -> Manage -> Users).
 //
 // Anyone can register and gets role "user". An account is an admin when its
@@ -375,9 +375,9 @@ async function forgot(request, env) {
         body: JSON.stringify({
           from: env.MAIL_FROM,
           to: [email],
-          subject: 'Your Selman Messages reset code',
+          subject: 'Your The Message reset code',
           text:
-            `Hello ${u.name},\n\nYour code to reset your Selman Messages password is ${code}.\n` +
+            `Hello ${u.name},\n\nYour code to reset your The Message password is ${code}.\n` +
             `It works for 15 minutes. If you did not ask for this, you can ignore this email.`,
         }),
       });
