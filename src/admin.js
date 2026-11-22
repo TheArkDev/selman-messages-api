@@ -1,4 +1,4 @@
-// Admin API for Selman Messages.
+// Admin API for The Message.
 // Served under /admin (page) and /admin/api/* (JSON). Everything except the
 // page itself and /login needs a valid token.
 //
@@ -456,7 +456,7 @@ export async function handleAdmin(request, env) {
       const r = await saveNotice(env, b);
       if (r.error) return fail(r.error);
       let push = null;
-      if (r.created && b && b.notify) push = await sendToTopic(env, 'notices', r.title, r.body || 'Tap to open Selman Messages', { type: 'notice' });
+      if (r.created && b && b.notify) push = await sendToTopic(env, 'notices', r.title, r.body || 'Tap to open The Message', { type: 'notice' });
       return json({ ...r, push });
     }
     const nm = p.match(/^\/notices\/([^/]+)$/);
