@@ -277,7 +277,23 @@ async function renameItem(request, env, id) {
     sets.push('description = ?');
     vals.push(t || null);
   }
-  if (sets.length === 0) return fail('Nothing to change');
+  // Move to another folder. Only the database row changes: the audio stays at
+  // the same R2 key and the item keeps its id, so listeners' favourites,
+  // playlists and downloads carry on working.
+  if ('speaker_id' in b) {
+    const target = await getSpeaker(env, String(b.speaker_id || ''));
+    if (!target) return fail('Folder not found', 404);
+    const cur = await env.DB.prepare('SELECT id, title, speaker_id FROM items WHERE id = ?').bind(id).first();
+    if (!cur) return fail('Item not found', 404);
+    if (cur.speaker_id !== target.id) {
+      const finalTitle = 'title' in b ? String(b.title || '').trim() : cur.title;
+      const dupe = await existingTitle(env, target, finalTitle);
+      if (dupe) return fail(`Already uploaded: "${dupe}" is in ${target.name}'s folder`, 409);
+      sets.push('speaker_id = ?', 'category = ?');
+      vals.push(target.id, target.category);
+    }
+  }
+  if (sets.length === 0) return 'speaker_id' in b ? json({ ok: true }) : fail('Nothing to change');
   await env.DB.prepare(`UPDATE items SET ${sets.join(', ')} WHERE id = ?`).bind(...vals, id).run();
   return json({ ok: true });
 }
@@ -331,6 +347,48 @@ async function uploadStart(request, env) {
   const key = `${sp.category}/${sp.id}/${rand(6)}-${base}.${e}`;
   const mp = await env.MEDIA.createMultipartUpload(key, { httpMetadata: { contentType: type } });
   return json({ key, uploadId: mp.uploadId });
+}
+
+// Checks a batch of file names BEFORE anything is uploaded, using the same title
+// cleaning as the upload itself. Reasons:
+//   folder    - already in this folder (the upload would be refused)
+//   selection - the same title appears twice in this batch (the second would be refused)
+//   other     - the same title exists in a different folder (allowed, but worth a look)
+async function uploadCheck(request, env) {
+  const b = await request.json().catch(() => null);
+  if (!b || !Array.isArray(b.filenames) || b.filenames.length > 300) return fail('Invalid request');
+  const sp = await getSpeaker(env, String(b.speaker_id || ''));
+  if (!sp) return fail('Folder not found', 404);
+
+  const mine = new Map();
+  const own = await env.DB.prepare('SELECT title FROM items WHERE speaker_id = ?').bind(sp.id).all();
+  for (const r of own.results || []) {
+    mine.set(sameTitleKey(r.title), r.title);
+    mine.set(sameTitleKey(cleanTitle(r.title, sp.name)), r.title);
+  }
+  const elsewhere = new Map();
+  const rest = await env.DB.prepare(
+    'SELECT i.title, s.name AS speaker_name FROM items i JOIN speakers s ON s.id = i.speaker_id WHERE i.speaker_id != ?'
+  )
+    .bind(sp.id)
+    .all();
+  for (const r of rest.results || []) {
+    const k = sameTitleKey(r.title);
+    if (k && !elsewhere.has(k)) elsewhere.set(k, r.speaker_name);
+  }
+
+  const seen = new Set();
+  const duplicates = [];
+  b.filenames.forEach((name, index) => {
+    const k = sameTitleKey(cleanTitle(String(name || ''), sp.name));
+    if (!k) return;
+    const twice = seen.has(k);
+    seen.add(k);
+    if (mine.has(k)) duplicates.push({ index, reason: 'folder', title: mine.get(k) });
+    else if (twice) duplicates.push({ index, reason: 'selection' });
+    else if (elsewhere.has(k)) duplicates.push({ index, reason: 'other', folder: elsewhere.get(k) });
+  });
+  return json({ duplicates });
 }
 
 async function uploadPart(request, env) {
@@ -492,6 +550,7 @@ export async function handleAdmin(request, env) {
     if (m && method === 'DELETE') return await deleteItem(env, decodeURIComponent(m[1]));
 
     if (p === '/upload/start' && method === 'POST') return await uploadStart(request, env);
+    if (p === '/upload/check' && method === 'POST') return await uploadCheck(request, env);
     if (p === '/upload/part' && method === 'PUT') return await uploadPart(request, env);
     if (p === '/upload/complete' && method === 'POST') return await uploadComplete(request, env);
     if (p === '/upload/abort' && method === 'POST') return await uploadAbort(request, env);

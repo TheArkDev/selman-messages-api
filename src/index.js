@@ -133,14 +133,21 @@ const TRACK_SELECT = `
 // ---- handlers ----------------------------------------------------------------
 async function handleHome(env) {
   const { results } = await env.DB.prepare(
-    `${TRACK_SELECT} WHERE i.category = 'mog' ORDER BY i.id LIMIT 2000`
+    `${TRACK_SELECT} ORDER BY i.id LIMIT 4000`
   ).all();
 
   const day = dayKey();
-  const featured = pickMixed(results, 6, mulberry32(hashString(`featured-${day}`)));
+  // Today's Messages stays MOG only, as before.
+  const mog = results.filter((r) => r.category === 'mog');
+  const featured = pickMixed(mog, 6, mulberry32(hashString(`featured-${day}`)));
   const used = new Set(featured.map((r) => r.id));
+
+  // Suggested for you: one from each folder in turn across MOG, Selman, Songs
+  // and Prayer, so no single speaker or artist fills the list. The mix changes
+  // a few times a day.
+  const block = Math.floor(new Date(Date.now() + 3 * 3600 * 1000).getUTCHours() / 6);
   const rest = results.filter((r) => !used.has(r.id));
-  const suggested = shuffle(rest, mulberry32(hashString(`suggested-${day}`))).slice(0, 10);
+  const suggested = pickMixed(rest, 10, mulberry32(hashString(`suggested-${day}-${block}`)));
 
   return json(
     {
