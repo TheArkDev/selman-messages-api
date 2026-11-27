@@ -38,3 +38,11 @@ CREATE TABLE IF NOT EXISTS users (
   pass_hash  TEXT NOT NULL,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
+-- Listens per item per day (Kenya time). Created automatically by the Worker too.
+CREATE TABLE IF NOT EXISTS play_daily (
+  day TEXT NOT NULL,
+  item_id TEXT NOT NULL,
+  plays INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (day, item_id)
+);
