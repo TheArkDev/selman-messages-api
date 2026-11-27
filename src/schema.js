@@ -26,6 +26,11 @@ export function ensureSchema(env) {
       await env.DB.prepare(
         'CREATE TABLE IF NOT EXISTS user_data (user_id TEXT PRIMARY KEY, data TEXT NOT NULL, updated_at INTEGER NOT NULL)'
       ).run();
+      // Listens per item per day (Kenya time), so Insights can show trends.
+      // History starts from the day this table was created.
+      await env.DB.prepare(
+        'CREATE TABLE IF NOT EXISTS play_daily (day TEXT NOT NULL, item_id TEXT NOT NULL, plays INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (day, item_id))'
+      ).run();
       // Announcements shown on Home.
       await env.DB.prepare(
         'CREATE TABLE IF NOT EXISTS notices (id TEXT PRIMARY KEY, title TEXT NOT NULL, body TEXT, event_date TEXT, expires_on TEXT, created_at TEXT NOT NULL DEFAULT (datetime(\'now\')))'
@@ -34,6 +39,13 @@ export function ensureSchema(env) {
       await env.DB.prepare(
         'CREATE TABLE IF NOT EXISTS live_state (channel_id TEXT PRIMARY KEY, video_id TEXT)'
       ).run();
+      // alerted_at: when we last sent an alert for the channel. last_live_at: when we last saw it live.
+      // They stop the same stream (or a flickering YouTube answer) from alerting again and again.
+      const ls = await env.DB.prepare('PRAGMA table_info(live_state)').all();
+      const haveLs = new Set((ls.results || []).map((r) => r.name));
+      for (const col of ['alerted_at', 'last_live_at']) {
+        if (!haveLs.has(col)) await env.DB.prepare(`ALTER TABLE live_state ADD COLUMN ${col} INTEGER`).run();
+      }
       // Last time each channel was seen live (keeps one bad YouTube answer from switching it off).
       await env.DB.prepare(
         'CREATE TABLE IF NOT EXISTS live_seen (channel_id TEXT PRIMARY KEY, video_id TEXT, title TEXT, seen_at INTEGER)'

@@ -149,14 +149,21 @@ async function handleHome(env) {
   const rest = results.filter((r) => !used.has(r.id));
   const suggested = pickMixed(rest, 10, mulberry32(hashString(`suggested-${day}-${block}`)));
 
+  // Recently added: newest uploads across every folder.
+  const latest = results
+    .filter((r) => r.published_at)
+    .sort((a, b) => (a.published_at < b.published_at ? 1 : a.published_at > b.published_at ? -1 : 0))
+    .slice(0, 10);
+
   return json(
     {
       date: day,
       featured: featured.map((r) => mapTrack(env, r)),
       suggested: suggested.map((r) => mapTrack(env, r)),
+      latest: latest.map((r) => mapTrack(env, r)),
     },
     200,
-    600
+    120
   );
 }
 
@@ -218,6 +225,15 @@ async function handleSearch(env, q) {
 async function handlePlay(env, id) {
   if (!id || id.length > 120) return json({ error: 'Bad request' }, 400);
   await env.DB.prepare('UPDATE items SET plays = plays + 1 WHERE id = ?').bind(id).run();
+  try {
+    await env.DB.prepare(
+      'INSERT INTO play_daily (day, item_id, plays) VALUES (?, ?, 1) ON CONFLICT(day, item_id) DO UPDATE SET plays = plays + 1'
+    )
+      .bind(dayKey(), id)
+      .run();
+  } catch (e) {
+    /* the listen is already counted; the daily chart can miss one */
+  }
   return json({ ok: true });
 }
 

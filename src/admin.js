@@ -298,6 +298,11 @@ async function renameItem(request, env, id) {
   return json({ ok: true });
 }
 
+// Day key in Kenya time (UTC+3), n days ago. Matches the keys the app's listens are stored under.
+function kenyaDay(daysAgo = 0) {
+  return new Date(Date.now() + 3 * 3600 * 1000 - daysAgo * 86400 * 1000).toISOString().slice(0, 10);
+}
+
 async function stats(env) {
   const totals = await env.DB.prepare(
     'SELECT COUNT(*) AS items, COALESCE(SUM(plays), 0) AS plays FROM items'
@@ -308,13 +313,88 @@ async function stats(env) {
      FROM items i JOIN speakers s ON s.id = i.speaker_id
      WHERE i.plays > 0 ORDER BY i.plays DESC, i.title LIMIT 10`
   ).all();
+
+  // Trends. Each part is optional so one failure never hides the basic totals.
+  const days = [];
+  for (let i = 13; i >= 0; i--) days.push(kenyaDay(i));
+  let daily = days.map((day) => ({ day, plays: 0 }));
+  let trending = [];
+  let byCategory = [];
+  let topFolders = [];
+  let neverPlayed = null;
+  let newUsers7 = null;
+  try {
+    const d = await env.DB.prepare('SELECT day, SUM(plays) AS plays FROM play_daily WHERE day >= ? GROUP BY day')
+      .bind(days[0])
+      .all();
+    const m = new Map((d.results || []).map((r) => [r.day, r.plays]));
+    daily = days.map((day) => ({ day, plays: m.get(day) || 0 }));
+
+    const t = await env.DB.prepare(
+      `SELECT i.id, i.title, s.name AS speaker_name, SUM(d.plays) AS plays
+       FROM play_daily d JOIN items i ON i.id = d.item_id JOIN speakers s ON s.id = i.speaker_id
+       WHERE d.day >= ? GROUP BY i.id ORDER BY plays DESC, i.title LIMIT 5`
+    )
+      .bind(days[7])
+      .all();
+    trending = t.results || [];
+
+    const c = await env.DB.prepare(
+      'SELECT category AS name, COALESCE(SUM(plays), 0) AS plays, COUNT(*) AS items FROM items GROUP BY category ORDER BY plays DESC'
+    ).all();
+    byCategory = c.results || [];
+
+    const f = await env.DB.prepare(
+      `SELECT s.name AS name, COALESCE(SUM(i.plays), 0) AS plays, COUNT(i.id) AS items
+       FROM speakers s LEFT JOIN items i ON i.speaker_id = s.id
+       GROUP BY s.id ORDER BY plays DESC, s.name LIMIT 5`
+    ).all();
+    topFolders = f.results || [];
+
+    const n = await env.DB.prepare('SELECT COUNT(*) AS n FROM items WHERE plays = 0').first();
+    neverPlayed = n ? n.n : null;
+
+    const u = await env.DB.prepare("SELECT COUNT(*) AS n FROM users WHERE created_at >= datetime('now', '-7 days')").first();
+    newUsers7 = u ? u.n : null;
+  } catch (e) {
+    /* keep whatever was gathered */
+  }
+
   return json({
     items: totals ? totals.items : 0,
     plays: totals ? totals.plays : 0,
     folders: sp ? sp.n : 0,
     users: await adminUserCount(env),
     top: results,
+    daily,
+    trending,
+    by_category: byCategory,
+    top_folders: topFolders,
+    never_played: neverPlayed,
+    new_users_7d: newUsers7,
   });
+}
+
+// Sends ONE alert after a batch of uploads finishes (the app calls this once per
+// folder per batch, so listeners are not buzzed for every file).
+async function announceNew(request, env) {
+  const b = await request.json().catch(() => null);
+  if (!b) return fail('Invalid request');
+  const sp = await getSpeaker(env, String(b.speaker_id || ''));
+  if (!sp) return fail('Folder not found', 404);
+  if (!pushReady(env)) return fail('Push is not set up yet: the FCM_SERVICE_ACCOUNT secret is missing on the Worker.', 503);
+
+  const ids = Array.isArray(b.item_ids) ? b.item_ids.slice(0, 500).map(String) : [];
+  const count = Math.max(1, ids.length || Math.trunc(Number(b.count) || 1));
+  const noun = sp.category === 'songs' ? 'song' : sp.category === 'prayer' ? 'prayer' : 'message';
+  let body = 'Tap to listen';
+  if (count === 1 && ids[0]) {
+    const it = await env.DB.prepare('SELECT title FROM items WHERE id = ? AND speaker_id = ?').bind(ids[0], sp.id).first();
+    if (it && it.title) body = it.title.slice(0, 120);
+  }
+  const title = count > 1 ? `${count} new ${noun}s from ${sp.name}` : `New ${noun} from ${sp.name}`;
+  const r = await sendToTopic(env, 'new', title, body, { type: 'new', speaker_id: sp.id, category: sp.category });
+  return r.ok ? json({ ok: true }) : fail(r.error, 502);
 }
 
 async function resetUser(env, id) {
@@ -522,6 +602,7 @@ export async function handleAdmin(request, env) {
       await deleteNotice(env, decodeURIComponent(nm[1]));
       return json({ ok: true });
     }
+    if (p === '/announce-new' && method === 'POST') return await announceNew(request, env);
     if (p === '/push-test' && method === 'POST') {
       if (!pushReady(env)) return fail('Push is not set up yet: the FCM_SERVICE_ACCOUNT secret is missing on the Worker.', 503);
       const r = await sendToTopic(env, 'live', 'Test alert', 'Push notifications are working.', { type: 'test' });
